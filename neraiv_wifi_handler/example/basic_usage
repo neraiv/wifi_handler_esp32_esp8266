@@ -1,0 +1,24 @@
+#include <Arduino.h>
+#include "neraiv_wifi_handler.h"
+
+
+// Changer WiFi SSIDs and PASSWORDs
+static String SSIDs[] = {"WiFi_1_SSID","WiFi_2_SSID","WiFi_3_SSID"};
+static String PASSWORDs[] = {"WiFi_1_PASSWORD","WiFi_2_PASSWORD","WiFi_3_PASSWORD"};
+
+WiFiHandler class1(SSIDs, PASSWORDs, 3/*Known WiFi count*/, true /*WiFi required default TRUE*/); 
+
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(115200);
+  Serial.print("");
+  class1.connectWiFi(); // Start WiFi connection
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  class1.handleWiFi();  // If esp looses connection,  try to reconnect (I may add more functinoality later, this much is enough for me now)
+}
+
+
+
