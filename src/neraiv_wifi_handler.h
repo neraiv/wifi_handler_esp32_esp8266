@@ -1,6 +1,7 @@
 #if !defined(NERAIV_WIFI_HANDLER_H)
 #define NERAIV_WIFI_HANDLER_H
 
+#include <vector>
 #include <Arduino.h>
 #include <string.h>
 
@@ -11,38 +12,43 @@
     #include <WiFi.h>
 #endif
 
-struct WiFiCredantials{
-    String SSID;
-    String PASSWORD;
+// Uncomment the following line to enable debug messages
+#define WIFI_HANDLER_DEBUG
+
+enum class WiFiError {
+    SetupParametersDoesNotMatch,
+    CantConnectWiFi,
+    CantRetrieveIpAddress
+};
+
+class WiFi_t {
+public:
+    WiFi_t(const String& ssid, const String& password)
+        : ssid_(ssid), password_(password), priority(0), connectable(false) {}
+
+    String ssid_;
+    String password_;
     uint8_t priority;
     bool connectable;
 };
 
-class WiFiHandler{
+class WiFiHandler {
+public:
+    WiFiHandler(const std::vector<WiFi_t*>& wifiList, bool wifi_required=true);
 
-    public:
-    	// Pass SSIDs PASSWORDs KnownWiFiCount and ConnectionRequired flag (default true) to class
-        WiFiHandler(String SSIDs[],String PASSWORDs[], uint8_t knownWiFiCount, bool WiFiRequired = true);
-        
-        // Connects to strongest known WiFi found
-        bool connectWiFi();            
-        
-        // Searchs for connectable WiFi and autamticaly sets stongest WiFi priorty first.        
-        bool searchIfOneOfKnownWiFiExists();  
-        
-        // Set WiFi priorty first at given index 
-        void setPriorityFirst(uint8_t index);  
-        
-        // Reconnects WiFi if disconnected, u may want to add this into WiFi.event which handles dissconnect issue if WiFi required.
-        bool handleWiFi();
-        
-    private:
-        WiFiCredantials WiFis[5];
-        String _SSIDs[5];
-        String _PASSWORDs[5];
-        uint8_t _knownWiFiCount;
-        bool _WiFiRequired;
+    bool connectWiFi();
+    bool searchIfOneOfKnownWiFiExists();
+    bool handleWiFi();
+
+private:
+    void setPriorityFirst(uint8_t index);
+
+    std::vector<WiFi_t*> wifiList_;
+    int _selected_wifi_index = 0;
+    bool _WiFiRequired;
+    
+    unsigned long lastScanTime;
+    const unsigned long scanInterval;
 };
-
 
 #endif // NERAIV_WIFI_HANDLER_H

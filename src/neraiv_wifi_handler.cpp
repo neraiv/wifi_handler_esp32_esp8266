@@ -1,53 +1,62 @@
 #include "neraiv_wifi_handler.h"
 
-
-
-WiFiHandler::WiFiHandler(String SSIDs[],String PASSWORDs[], uint8_t knownWiFiCount, bool WiFiRequired){
-    for(uint8_t i = 0; i<knownWiFiCount; i++){
-        WiFis[i].SSID = SSIDs[i];
-        WiFis[i].PASSWORD = PASSWORDs[i];
-        WiFis[i].priority = i;
-    } 
-    _knownWiFiCount = knownWiFiCount;
-
-    _WiFiRequired = WiFiRequired; 
+WiFiHandler::WiFiHandler(const std::vector<WiFi_t*>& wifiList, bool wifi_required)
+        : wifiList_(wifiList), _WiFiRequired(wifi_required), lastScanTime(0), scanInterval(60000) {
+    WiFi.mode(WIFI_STA); // Set WiFi to station mode (WiFi client)
 }
 
-/* bool WiFiHandler::createAccsessPointWithStaticIP(String SSID, String PASSWORD, IPAddress ip, IPAddress subnet){
-    WiFi.mode(WIFI_AP);
-    WiFi.softAPConfig(ip,ip,subnet);
-    WiFi.softAP(SSID,PASSWORD);
-    Serial.println(WiFi.localIP());
-    return false;
-} */
 
-bool WiFiHandler::searchIfOneOfKnownWiFiExists(){
-
+bool WiFiHandler::searchIfOneOfKnownWiFiExists() {
     bool RETURN_VAL = false;
     int dBm = -150;
-    Serial.printf("Scaning for WiFi(s)\n");
+    
+    #ifdef WIFI_HANDLER_DEBUG
+    Serial.printf("Scanning for WiFi(s)\n");
+    #endif
 
     int n = WiFi.scanNetworks();
 
-    Serial.printf("Scan complate found %d WiFi(s)\n",n);
-
-
-    if( n == 0){
+    if (n == 0) {
+        #ifdef WIFI_HANDLER_DEBUG
+        Serial.println("No networks found.");
+        #endif
         return false;
-    }else{
-        for(uint8_t i = 0;  i<n;i++){
-            Serial.printf("%2d",i + 1);
+    } else {
+        #ifdef WIFI_HANDLER_DEBUG
+        Serial.printf("Scan complete; found %d WiFi(s)\n", n);
+        #endif
+        for (uint8_t i = 0; i < n; i++) {
+            #ifdef WIFI_HANDLER_DEBUG
+            Serial.printf("%2d", i + 1);
             Serial.print(" | ");
             Serial.printf("%-32.32s", WiFi.SSID(i).c_str());
             Serial.print(" | dBm");
             Serial.printf("%4d", WiFi.RSSI(i));
-            Serial.print(" | ");
+            Serial.print(" | ch ");
             Serial.printf("%2d", WiFi.channel(i));
-            Serial.print(" | \n");
-            for(uint8_t k = 0; k<_knownWiFiCount; k++){
-                if(WiFi.SSID(i) == WiFis[k].SSID){
-                    WiFis[k].connectable = true;
-                    if(WiFi.RSSI(i) < dBm){
+            Serial.print(" | ");
+            #endif
+
+            bool isKnown = false;
+            for (const auto& wifi : wifiList_) {
+                if (wifi->ssid_ == WiFi.SSID(i)) {
+                    isKnown = true;
+                    break;
+                }
+            }
+
+            #ifdef WIFI_HANDLER_DEBUG
+            if (isKnown) {
+                Serial.println("KNOWN");
+            } else {
+                Serial.println("UNKNOWN");
+            }
+            #endif
+
+            for (uint8_t k = 0; k < wifiList_.size(); k++) {
+                if (WiFi.SSID(i) == wifiList_[k]->ssid_) {
+                    wifiList_[k]->connectable = true;
+                    if (WiFi.RSSI(i) > dBm) {
                         setPriorityFirst(k);
                         dBm = WiFi.RSSI(i);
                     }
@@ -58,68 +67,91 @@ bool WiFiHandler::searchIfOneOfKnownWiFiExists(){
     }
 
     WiFi.scanDelete();
-
     return RETURN_VAL;
 }
 
-bool WiFiHandler::connectWiFi(){
-    WiFi.disconnect();
-    delay(500);
-    if(searchIfOneOfKnownWiFiExists()){
-        for(uint8_t i = 0; i<_knownWiFiCount;i++){
-            if(WiFis[i].connectable){
-#if defined(ESP32)
-                WiFi.begin(WiFis[i].SSID.c_str(), WiFis[i].PASSWORD.c_str());
-                delay(500);
-                Serial.printf("Connected to %s with IP Address ", WiFis[i].SSID);
+bool WiFiHandler::connectWiFi() {
+    if (WiFi.status() == WL_CONNECTED) {
+        WiFi.disconnect();
+        // Return false to indicate disconnection, handled in handleWiFi
+        return false;
+    }
+
+    if (searchIfOneOfKnownWiFiExists()) {
+        #ifdef WIFI_HANDLER_DEBUG
+        Serial.println("Trying to connect to known WiFi...");
+        #endif
+
+        for (const auto& wifi : wifiList_) {
+            if (wifi->connectable) {
+                #if defined(ESP32)
+                WiFi.begin(wifi->ssid_.c_str(), wifi->password_.c_str());
+                #elif defined(ESP8266)
+                WiFi.begin(wifi->ssid_, wifi->password_);
+                #endif
+
+                unsigned long startAttemptTime = millis();
+                while(WiFi.status() != WL_CONNECTED) {
+                    if (millis() - startAttemptTime >= 10000) { // 10 seconds timeout
+                        #ifdef WIFI_HANDLER_DEBUG
+                        Serial.println("Connection attempt timed out.");
+                        #endif
+                        return false;
+                    }
+                    // Non-blocking
+                }
+
+                #ifdef WIFI_HANDLER_DEBUG
+                Serial.printf("Connected to %s with IP Address ", wifi->ssid_.c_str());
                 Serial.println(WiFi.localIP());
+                #endif
                 return true;
-#endif
-#if defined(ESP8266)
-                WiFi.begin(WiFis[i].SSID, WiFis[i].PASSWORD);
-                delay(500);
-                Serial.printf("Connected to %s with IP Address ", WiFis[i].SSID);
-                Serial.println(WiFi.localIP());
-                return true;
-#endif          
             }
         }
     }
-    Serial.println("Cant find Connectable WiFi");
 
+    #ifdef WIFI_HANDLER_DEBUG
+    Serial.println("Can't find connectable WiFi");
+    #endif
     return false;
 }
 
-void WiFiHandler::setPriorityFirst(uint8_t index){
-    String store_SSID = WiFis[index].SSID;
-    String store_PASSWORD = WiFis[index].PASSWORD;
-    bool   store_connactable = WiFis[index].connectable;
-
-
-    for(index; index>=1; index--){
-        WiFis[index].SSID = WiFis[index -1].SSID;
-        WiFis[index].PASSWORD = WiFis[index -1].PASSWORD;
-        WiFis[index].connectable = WiFis[index -1].connectable;
+void WiFiHandler::setPriorityFirst(uint8_t index) {
+    if (index >= wifiList_.size()) {
+        #ifdef WIFI_HANDLER_DEBUG
+        Serial.println("Index out of range");
+        #endif
+        return;
     }
 
-    WiFis[0].SSID = store_SSID;
-    WiFis[0].PASSWORD = store_PASSWORD;
-    WiFis[0].connectable = store_connactable;
-}   
+    WiFi_t* store_wifi = wifiList_[index];
 
+    for (int i = index; i > 0; --i) {
+        wifiList_[i] = wifiList_[i - 1];
+    }
 
-bool WiFiHandler::handleWiFi(){
-    if(WiFi.status() == WL_DISCONNECTED){
-        if(_WiFiRequired){
-            
-            while (!connectWiFi())
-            {
-                Serial.println("");
-                Serial.println("Retrying again in 5 seconds");
-                delay(5000);
-            }      
-        } else {
-            connectWiFi();
+    wifiList_[0] = store_wifi;
+}
+
+bool WiFiHandler::handleWiFi() {
+    unsigned long currentMillis = millis();
+
+    // Check if it's time to scan for networks
+    if (currentMillis - lastScanTime >= scanInterval) {
+        lastScanTime = currentMillis;
+        if (WiFi.status() == WL_DISCONNECTED) {
+            Serial.println("Hi");
+            if (_WiFiRequired) {
+                Serial.println("Hioy");
+                while (!connectWiFi()) {
+                    #ifdef WIFI_HANDLER_DEBUG
+                    Serial.println("Retrying again in 1 sec..");
+                    #endif
+                    delay(1000); // Small delay to avoid flooding the serial output
+                }
+            } else {
+                connectWiFi();
+            }
         }
     }
     return false;
